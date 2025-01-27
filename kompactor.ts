@@ -29,19 +29,67 @@ class ParquetCompactor {
         return join(this.getHostDir(host), 'dbs');
     }
 
+    normalizePath(path) {
+        return path.replace(/\/+/g, '/');
+    }
+
+    validateSourcePath(path, host) {
+        const parts = path.split('/');
+        if (parts[0] !== host) {
+            throw new Error(`Invalid path: ${path}, must start with host: ${host}`);
+        }
+        if (parts[1] !== 'dbs') {
+            throw new Error(`Invalid path: ${path}, second component must be 'dbs'`);
+        }
+        
+        if (parts.length !== 7) {
+            throw new Error(`Invalid path depth: ${path}, expected 7 components, got ${parts.length}`);
+        }
+        
+        if (!parts[6].endsWith('.parquet')) {
+            throw new Error(`Invalid file extension: ${path}, must end with .parquet`);
+        }
+
+        return true;
+    }
+
+    verifyPathCoherence(sourcePath, compactedPath, host) {
+        const normalizedSource = this.normalizePath(sourcePath);
+        const normalizedCompacted = this.normalizePath(compactedPath);
+
+        const sourceParts = normalizedSource.split('/');
+        const compactedParts = normalizedCompacted.split('/');
+
+        if (sourceParts.length !== compactedParts.length) {
+            throw new Error(`Path structure mismatch: ${sourcePath} vs ${compactedPath}`);
+        }
+
+        for (let i = 0; i < sourceParts.length - 1; i++) {
+            if (sourceParts[i] !== compactedParts[i]) {
+                throw new Error(`Path component mismatch at position ${i}: ${sourceParts[i]} vs ${compactedParts[i]}`);
+            }
+        }
+
+        const sourceFile = sourceParts[sourceParts.length - 1];
+        const compactedFile = compactedParts[compactedParts.length - 1];
+        if (!compactedFile.startsWith('c_') || !compactedFile.endsWith('.parquet')) {
+            throw new Error(`Invalid compacted file name convention: ${compactedFile}`);
+        }
+
+        return true;
+    }
+
     isCompactedFile(path) {
         return basename(path).startsWith('c_');
     }
 
     getTimeBasedGroups(files) {
-        // Sort files by min_time
         const sortedFiles = [...files].sort((a, b) => Number(BigInt(a.min_time) - BigInt(b.min_time)));
         const groups = [];
         let currentGroup = [];
         let currentMinTime = null;
 
         for (const file of sortedFiles) {
-            // Skip already compacted files
             if (this.isCompactedFile(file.path)) {
                 this.log(`Skipping already compacted file: ${file.path}`);
                 continue;
@@ -105,6 +153,7 @@ class ParquetCompactor {
         this.log('Initializing DuckDB instance...');
         this.log('DuckDB version:', duckdb.version());
 
+        // Create a new DuckDB instance with configuration
         this.instance = await DuckDBInstance.create(':memory:', {
             threads: '4'
         });
@@ -130,7 +179,7 @@ class ParquetCompactor {
     async compactParquetFiles(host, tableFiles, outputPath) {
         if (!this.connection) throw new Error('DuckDB connection not initialized');
         
-        const filePaths = tableFiles.map(f => join(this.getHostDir(host), f.path));
+        const filePaths = tableFiles.map(f => join(this.dataDir, f.path));
         
         this.log('Compacting files:', filePaths);
         this.log('Output path:', outputPath);
@@ -142,7 +191,7 @@ class ParquetCompactor {
 
         const fileListQuery = filePaths.map(path => `'${path}'`).join(', ');
         await this.connection.run(`
-            COPY (SELECT * FROM read_parquet_mergetree([${fileListQuery}], 'time') TO '${outputPath}' (FORMAT 'parquet');
+            COPY (SELECT * FROM read_parquet_mergetree([${fileListQuery}], 'time')) TO '${outputPath}' (FORMAT 'parquet');
         `);
     }
 
@@ -177,11 +226,18 @@ class ParquetCompactor {
         
         this.log('Got stats for compacted file:', stats);
         return stats;
+        
+        this.log('Got stats for compacted file:', stats);
+        return stats;
     }
 
     async processTableGroup(host, tableId, files) {
         this.log(`\nProcessing table group ${tableId} with ${files.length} files`);
         this.log('Files to process:', JSON.stringify(files, null, 2));
+
+        for (const file of files) {
+            this.validateSourcePath(file.path, host);
+        }
 
         const timeGroups = this.getTimeBasedGroups(files);
         this.log(`Split into ${timeGroups.length} time-based groups`);
@@ -193,26 +249,28 @@ class ParquetCompactor {
             const firstFile = groupFiles[0];
             const firstFilePath = firstFile.path;
             
-            const outputPath = join(
-                this.getDbsDir(host),
-                ...firstFilePath.split('/').slice(2, -1),
-                `c_${firstFile.id}_g${groupIndex}.parquet`
-            );
+            const pathParts = firstFilePath.split('/');
+            const timeSlot = pathParts[5];
+            
+            const compactedFileName = `c_${firstFile.id}_g${groupIndex}.parquet`;
+            const outputPathParts = [...pathParts.slice(0, -1), compactedFileName];
+            const relativePath = outputPathParts.join('/');
+            
+            this.verifyPathCoherence(firstFilePath, relativePath, host);
+            
+            const outputPath = join(this.dataDir, relativePath);
             
             if (this.dryRun) {
                 this.log(`[DRY-RUN] Would create directory: ${dirname(outputPath)}`);
                 this.log(`[DRY-RUN] Would compact files:`, groupFiles.map(f => basename(f.path)));
+                this.log(`[DRY-RUN] Source path pattern: ${firstFilePath}`);
+                this.log(`[DRY-RUN] Output path: ${relativePath}`);
             } else {
                 await mkdir(dirname(outputPath), { recursive: true });
             }
 
             await this.compactParquetFiles(host, groupFiles, outputPath);
             const stats = await this.getParquetStats(outputPath, groupFiles);
-
-            const relativePath = join(
-                ...firstFilePath.split('/').slice(0, -1),
-                basename(outputPath)
-            );
 
             results.push({
                 id: firstFile.id,
