@@ -19,19 +19,28 @@ Kompactor is a tool designed to efficiently manage and compact parquet files wit
 
 Basic usage pattern:
 ```bash
-bun kompactor.ts <data-dir> [options]
+bun run kompactor.ts <data-dir> --hosts <host1,host2,...> [options]
 ```
 
+### Arguments
+```bash
 Arguments:
-- `data-dir`: Directory containing snapshot metadata and parquet files
+    data-dir     Root data directory (e.g., /data)
+    --hosts      Comma-separated list of host folders to process (e.g., my_host,other_host)
 
 Options:
-- `--hosts`: Host directories to scan for snapshots
-- `--dry-run`: Run without making any changes
-- `--verbose`: Enable detailed logging
-- `--help`: Show help message
+    --dry-run    Run without making any changes
+    --verbose    Enable detailed logging
+    --window     Time window in hours for splitting files (default: 24)
+    --help       Show this help message
 
 Example:
+    bun run kompactor.ts /data --hosts my_host --dry-run --verbose
+    bun run kompactor.ts /data --hosts my_host,other_host --window 12
+
+```
+
+### Examples
 ```bash
 # Dry run with verbose output
 bun kompactor.ts ./data --hosts my_host --dry-run --verbose
