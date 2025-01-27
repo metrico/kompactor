@@ -142,12 +142,7 @@ class ParquetCompactor {
 
         const fileListQuery = filePaths.map(path => `'${path}'`).join(', ');
         await this.connection.run(`
-            COPY (
-                SELECT * 
-                FROM read_parquet([${fileListQuery}])
-                ORDER BY min_time
-            ) 
-            TO '${outputPath}' (FORMAT 'parquet')
+            COPY (SELECT * FROM read_parquet_mergetree([${fileListQuery}], 'time') TO '${outputPath}' (FORMAT 'parquet');
         `);
     }
 
