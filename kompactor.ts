@@ -3,46 +3,82 @@ import { join, dirname, resolve, sep, basename } from 'node:path';
 import duckdb, { DuckDBInstance, Connection } from '@duckdb/node-api';
 
 class ParquetCompactor {
-    dataDir: string;
-    hosts: string[];
-    dryRun: boolean;
-    verbose: boolean;
-    instance: DuckDBInstance | null = null;
-    connection: Connection | null = null;
-    log: (...args: any[]) => void;
-
-    constructor(dataDir: string, hosts: string[], options: { dryRun?: boolean; verbose?: boolean } = {}) {
+    constructor(dataDir, hosts, options = {}) {
         this.dataDir = dataDir;
         this.hosts = hosts;
         this.dryRun = options.dryRun || false;
         this.verbose = options.verbose || false;
+        this.timeWindowNanos = BigInt((options.timeWindowHours || 24) * 3600 * 1000000000);
+        this.instance = null;
+        this.connection = null;
         
         this.log = this.verbose ? 
             (...args) => console.log('[INFO]', ...args) : 
             () => {};
     }
 
-    getHostDir(host: string) {
+    getHostDir(host) {
         return join(this.dataDir, host);
     }
 
-    getSnapshotsDir(host: string) {
+    getSnapshotsDir(host) {
         return join(this.getHostDir(host), 'snapshots');
     }
 
-    getDbsDir(host: string) {
+    getDbsDir(host) {
         return join(this.getHostDir(host), 'dbs');
     }
 
+    isCompactedFile(path) {
+        return basename(path).startsWith('c_');
+    }
+
+    getTimeBasedGroups(files) {
+        // Sort files by min_time
+        const sortedFiles = [...files].sort((a, b) => Number(BigInt(a.min_time) - BigInt(b.min_time)));
+        const groups = [];
+        let currentGroup = [];
+        let currentMinTime = null;
+
+        for (const file of sortedFiles) {
+            // Skip already compacted files
+            if (this.isCompactedFile(file.path)) {
+                this.log(`Skipping already compacted file: ${file.path}`);
+                continue;
+            }
+
+            if (!currentGroup.length) {
+                currentGroup.push(file);
+                currentMinTime = BigInt(file.min_time);
+                continue;
+            }
+
+            const fileMaxTime = BigInt(file.max_time);
+            if (fileMaxTime - currentMinTime <= this.timeWindowNanos) {
+                currentGroup.push(file);
+            } else {
+                if (currentGroup.length > 0) {
+                    groups.push(currentGroup);
+                }
+                currentGroup = [file];
+                currentMinTime = BigInt(file.min_time);
+            }
+        }
+
+        if (currentGroup.length > 0) {
+            groups.push(currentGroup);
+        }
+
+        return groups;
+    }
+
     async validateDirectories() {
-        // Check if data directory exists
         try {
             await access(this.dataDir);
         } catch {
             throw new Error(`Data directory does not exist: ${this.dataDir}`);
         }
 
-        // Check if each host directory exists
         for (const host of this.hosts) {
             const hostDir = this.getHostDir(host);
             try {
@@ -51,14 +87,12 @@ class ParquetCompactor {
                 throw new Error(`Host directory does not exist: ${hostDir}`);
             }
 
-            // Check for snapshots directory
             try {
                 await access(this.getSnapshotsDir(host));
             } catch {
                 throw new Error(`Snapshots directory does not exist: ${this.getSnapshotsDir(host)}`);
             }
 
-            // Check for dbs directory
             try {
                 await access(this.getDbsDir(host));
             } catch {
@@ -72,7 +106,7 @@ class ParquetCompactor {
         this.log('DuckDB version:', duckdb.version());
 
         this.instance = await DuckDBInstance.create(':memory:', {
-            threads: '4'  // Use 4 threads for parallel processing
+            threads: '4'
         });
         this.connection = await this.instance.connect();
 
@@ -93,10 +127,9 @@ class ParquetCompactor {
         this.log('DuckDB extensions initialized successfully');
     }
 
-    async compactParquetFiles(host: string, tableFiles: any[], outputPath: string) {
+    async compactParquetFiles(host, tableFiles, outputPath) {
         if (!this.connection) throw new Error('DuckDB connection not initialized');
         
-        // Convert file paths to absolute paths, ensuring proper host directory is used
         const filePaths = tableFiles.map(f => join(this.getHostDir(host), f.path));
         
         this.log('Compacting files:', filePaths);
@@ -107,7 +140,6 @@ class ParquetCompactor {
             return;
         }
 
-        // Prepare the file list for the query
         const fileListQuery = filePaths.map(path => `'${path}'`).join(', ');
         await this.connection.run(`
             COPY (
@@ -119,7 +151,7 @@ class ParquetCompactor {
         `);
     }
 
-    async getParquetStats(filePath: string, sourceFiles?: any[]) {
+    async getParquetStats(filePath, sourceFiles) {
         if (!this.connection) throw new Error('DuckDB connection not initialized');
 
         if (this.dryRun && sourceFiles) {
@@ -152,47 +184,63 @@ class ParquetCompactor {
         return stats;
     }
 
-    async processTableGroup(host: string, tableId: number, files: any[]) {
+    async processTableGroup(host, tableId, files) {
         this.log(`\nProcessing table group ${tableId} with ${files.length} files`);
         this.log('Files to process:', JSON.stringify(files, null, 2));
-        
-        // Use the first file's path components to build the output path
-        const firstFile = files[0];
-        const baseFileName = basename(firstFile.path); // Using imported basename directly
-        const firstFilePath = firstFile.path;
-        
-        // The output path should exactly match the input path format
-        const outputPath = join(
-            this.getDbsDir(host),
-            ...firstFilePath.split('/').slice(2) // Remove 'my_host/dbs' prefix as it's added by getDbsDir
-        );
-        
-        if (this.dryRun) {
-            this.log(`[DRY-RUN] Would create directory: ${dirname(outputPath)}`);
-        } else {
-            await mkdir(dirname(outputPath), { recursive: true });
+
+        const timeGroups = this.getTimeBasedGroups(files);
+        this.log(`Split into ${timeGroups.length} time-based groups`);
+
+        const results = [];
+        for (const [groupIndex, groupFiles] of timeGroups.entries()) {
+            if (groupFiles.length === 0) continue;
+
+            const firstFile = groupFiles[0];
+            const firstFilePath = firstFile.path;
+            
+            const outputPath = join(
+                this.getDbsDir(host),
+                ...firstFilePath.split('/').slice(2, -1),
+                `c_${firstFile.id}_g${groupIndex}.parquet`
+            );
+            
+            if (this.dryRun) {
+                this.log(`[DRY-RUN] Would create directory: ${dirname(outputPath)}`);
+                this.log(`[DRY-RUN] Would compact files:`, groupFiles.map(f => basename(f.path)));
+            } else {
+                await mkdir(dirname(outputPath), { recursive: true });
+            }
+
+            await this.compactParquetFiles(host, groupFiles, outputPath);
+            const stats = await this.getParquetStats(outputPath, groupFiles);
+
+            const relativePath = join(
+                ...firstFilePath.split('/').slice(0, -1),
+                basename(outputPath)
+            );
+
+            results.push({
+                id: firstFile.id,
+                path: relativePath,
+                size_bytes: stats.size_bytes,
+                row_count: stats.row_count,
+                chunk_time: firstFile.chunk_time,
+                min_time: stats.min_time,
+                max_time: stats.max_time
+            });
         }
 
-        await this.compactParquetFiles(host, files, outputPath);
-        const stats = await this.getParquetStats(outputPath, files);
-
-        // Keep the exact same path format as input
-        const relativePath = firstFilePath;
-
-        return {
-            id: firstFile.id,
-            path: relativePath,
-            size_bytes: stats.size_bytes,
-            row_count: stats.row_count,
-            chunk_time: firstFile.chunk_time,
-            min_time: stats.min_time,
-            max_time: stats.max_time
-        };
+        return results;
     }
 
-    async updateMetadata(metadata: any, tableId: number, compactedFile: any) {
+    async readSnapshotMetadata(host, filename) {
+        const content = await readFile(join(this.getSnapshotsDir(host), filename), 'utf-8');
+        return JSON.parse(content);
+    }
+
+    async updateMetadata(metadata, tableId, compactedFiles) {
         this.log('\nUpdating metadata for table:', tableId);
-        this.log('Compacted file info:', JSON.stringify(compactedFile, null, 2));
+        this.log('Compacted files info:', JSON.stringify(compactedFiles, null, 2));
 
         for (const [dbId, dbInfo] of metadata.databases) {
             for (const [tId, files] of dbInfo.tables) {
@@ -201,34 +249,31 @@ class ParquetCompactor {
                     this.log('Original files:', JSON.stringify(files, null, 2));
                     
                     if (this.dryRun) {
-                        this.log('[DRY-RUN] Would replace files with:', JSON.stringify([compactedFile], null, 2));
+                        this.log('[DRY-RUN] Would replace files with:', JSON.stringify(compactedFiles, null, 2));
                     } else {
-                        dbInfo.tables.set(tId, [compactedFile]);
+                        dbInfo.tables.set(tId, compactedFiles);
+                    }
+
+                    const aggregateStats = {
+                        size_bytes: compactedFiles.reduce((sum, f) => sum + f.size_bytes, 0),
+                        row_count: compactedFiles.reduce((sum, f) => sum + f.row_count, 0),
+                        min_time: Math.min(...compactedFiles.map(f => f.min_time)),
+                        max_time: Math.max(...compactedFiles.map(f => f.max_time))
+                    };
+
+                    if (this.dryRun) {
+                        this.log('[DRY-RUN] Would update metadata statistics to:', aggregateStats);
+                    } else {
+                        metadata.parquet_size_bytes = aggregateStats.size_bytes;
+                        metadata.row_count = aggregateStats.row_count;
+                        metadata.min_time = aggregateStats.min_time;
+                        metadata.max_time = aggregateStats.max_time;
                     }
                 }
             }
         }
 
-        if (this.dryRun) {
-            this.log('[DRY-RUN] Would update metadata statistics to:', {
-                parquet_size_bytes: compactedFile.size_bytes,
-                row_count: compactedFile.row_count,
-                min_time: compactedFile.min_time,
-                max_time: compactedFile.max_time
-            });
-        } else {
-            metadata.parquet_size_bytes = compactedFile.size_bytes;
-            metadata.row_count = compactedFile.row_count;
-            metadata.min_time = compactedFile.min_time;
-            metadata.max_time = compactedFile.max_time;
-        }
-
         return metadata;
-    }
-
-    async readSnapshotMetadata(host: string, filename: string) {
-        const content = await readFile(join(this.getSnapshotsDir(host), filename), 'utf-8');
-        return JSON.parse(content);
     }
 
     async compact() {
@@ -248,8 +293,8 @@ class ParquetCompactor {
                         for (const [tableId, files] of dbInfo.tables) {
                             console.log(`Processing table ${tableId} with ${files.length} files...`);
                             
-                            const compactedFile = await this.processTableGroup(host, tableId, files);
-                            await this.updateMetadata(metadata, tableId, compactedFile);
+                            const compactedFiles = await this.processTableGroup(host, tableId, files);
+                            await this.updateMetadata(metadata, tableId, compactedFiles);
                         }
                     }
 
@@ -281,11 +326,12 @@ Arguments:
 Options:
     --dry-run    Run without making any changes
     --verbose    Enable detailed logging
+    --window     Time window in hours for splitting files (default: 24)
     --help       Show this help message
 
 Example:
     bun run kompactor.ts /data --hosts my_host --dry-run --verbose
-    bun run kompactor.ts /data --hosts my_host,other_host
+    bun run kompactor.ts /data --hosts my_host,other_host --window 12
 `;
 
 const args = process.argv.slice(2);
@@ -307,14 +353,22 @@ const hosts = args[hostsIndex + 1].split(',');
 const dryRun = args.includes('--dry-run');
 const verbose = args.includes('--verbose');
 
+const windowIndex = args.indexOf('--window');
+const timeWindowHours = windowIndex !== -1 ? parseInt(args[windowIndex + 1]) : 24;
+
 console.log(`Starting compactor with:
 Data directory: ${dataDir}
 Hosts to process: ${hosts.join(', ')}
+Time window: ${timeWindowHours}h
 Dry run: ${dryRun}
 Verbose: ${verbose}
 `);
 
-const compactor = new ParquetCompactor(dataDir, hosts, { dryRun, verbose });
+const compactor = new ParquetCompactor(dataDir, hosts, { 
+    dryRun, 
+    verbose,
+    timeWindowHours 
+});
 
 try {
     await compactor.compact();
