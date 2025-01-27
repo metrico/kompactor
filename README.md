@@ -4,7 +4,7 @@ DuckDB powered Parquet + Metadata Compactor for InfluxDB3 Core
 
 ## Overview
 
-Kompactor is a tool designed to efficiently manage and compact parquet files with associated metadata. It specifically handles:
+Kompactor is designed to efficiently compact InfluxDB3 parquet files with associated metadata.
 - Reading snapshot metadata from JSON files
 - Compacting multiple parquet files into single files sorted by timestamp
 - Updating metadata to reflect the new compacted file structure
@@ -27,12 +27,12 @@ bun run kompactor.ts <data-dir> --hosts <host1,host2,...> [options]
 ```bash
 Arguments:
     data-dir     Root data directory (e.g., /data)
-    --hosts      Comma-separated list of host folders to process (e.g., my_host,other_host)
 
 Options:
+    --hosts      Comma-separated list of host folders to process (e.g., my_host,other_host)
+    --window     Time window in hours for splitting files (default: 24)
     --dry-run    Run without making any changes
     --verbose    Enable detailed logging
-    --window     Time window in hours for splitting files (default: 24)
     --help       Show this help message
 
 Example:
