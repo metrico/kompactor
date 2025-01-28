@@ -4,7 +4,7 @@ DuckDB powered Parquet + Metadata Compactor for InfluxDB3 Core
 
 ## Status
 
-- ⚠️ Experimental & Unstable - keep backups!
+> ⚠️ Experimental, Untested & Unstable - keep backups!
 
 ## Overview
 
