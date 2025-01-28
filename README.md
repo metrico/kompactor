@@ -2,6 +2,10 @@
 
 DuckDB powered Parquet + Metadata Compactor for InfluxDB3 Core
 
+## Status
+
+- ⚠️ Experimental & Unstable - keep backups!
+
 ## Overview
 
 Kompactor is designed to efficiently compact InfluxDB3 parquet files with associated metadata.
