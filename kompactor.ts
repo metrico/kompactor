@@ -1,6 +1,6 @@
 import { readdir, mkdir, readFile, writeFile, access } from 'node:fs/promises';
 import { join, dirname, resolve, sep, basename } from 'node:path';
-import duckdb, { DuckDBInstance, Connection } from '@duckdb/node-api';
+import duckdb, { DuckDBInstance } from '@duckdb/node-api';
 
 class ParquetCompactor {
     constructor(dataDir, hosts, options = {}) {
@@ -15,18 +15,6 @@ class ParquetCompactor {
         this.log = this.verbose ? 
             (...args) => console.log('[INFO]', ...args) : 
             () => {};
-    }
-
-    getHostDir(host) {
-        return join(this.dataDir, host);
-    }
-
-    getSnapshotsDir(host) {
-        return join(this.getHostDir(host), 'snapshots');
-    }
-
-    getDbsDir(host) {
-        return join(this.getHostDir(host), 'dbs');
     }
 
     normalizePath(path) {
@@ -128,7 +116,7 @@ class ParquetCompactor {
         }
 
         for (const host of this.hosts) {
-            const hostDir = this.getHostDir(host);
+            const hostDir = join(this.dataDir, host);
             try {
                 await access(hostDir);
             } catch {
@@ -136,15 +124,15 @@ class ParquetCompactor {
             }
 
             try {
-                await access(this.getSnapshotsDir(host));
+                await access(join(hostDir, 'snapshots'));
             } catch {
-                throw new Error(`Snapshots directory does not exist: ${this.getSnapshotsDir(host)}`);
+                throw new Error(`Snapshots directory does not exist: ${join(hostDir, 'snapshots')}`);
             }
 
             try {
-                await access(this.getDbsDir(host));
+                await access(join(hostDir, 'dbs'));
             } catch {
-                throw new Error(`DBs directory does not exist: ${this.getDbsDir(host)}`);
+                throw new Error(`DBs directory does not exist: ${join(hostDir, 'dbs')}`);
             }
         }
     }
@@ -153,7 +141,6 @@ class ParquetCompactor {
         this.log('Initializing DuckDB instance...');
         this.log('DuckDB version:', duckdb.version());
 
-        // Create a new DuckDB instance with configuration
         this.instance = await DuckDBInstance.create(':memory:', {
             threads: '4'
         });
@@ -176,59 +163,31 @@ class ParquetCompactor {
         this.log('DuckDB extensions initialized successfully');
     }
 
-    async compactParquetFiles(host, tableFiles, outputPath) {
+    getAggregateStats(groupFiles) {
+        return {
+            row_count: groupFiles.reduce((sum, file) => sum + file.row_count, 0),
+            size_bytes: groupFiles.reduce((sum, file) => sum + file.size_bytes, 0),
+            min_time: Math.min(...groupFiles.map(file => file.min_time)),
+            max_time: Math.max(...groupFiles.map(file => file.max_time))
+        };
+    }
+
+    async mergeParquetFiles(host, tableFiles, outputPath) {
         if (!this.connection) throw new Error('DuckDB connection not initialized');
         
         const filePaths = tableFiles.map(f => join(this.dataDir, f.path));
         
-        this.log('Compacting files:', filePaths);
+        this.log('Merging files:', filePaths);
         this.log('Output path:', outputPath);
         
         if (this.dryRun) {
-            this.log('[DRY-RUN] Would execute DuckDB query to compact files');
+            this.log('[DRY-RUN] Would merge files');
             return;
         }
 
         const fileListQuery = filePaths.map(path => `'${path}'`).join(', ');
-        await this.connection.run(`
-            COPY (SELECT * FROM read_parquet_mergetree([${fileListQuery}], 'time')) TO '${outputPath}' (FORMAT 'parquet');
-        `);
-    }
-
-    async getParquetStats(filePath, sourceFiles) {
-        if (!this.connection) throw new Error('DuckDB connection not initialized');
-
-        if (this.dryRun && sourceFiles) {
-            this.log('[DRY-RUN] Calculating aggregate stats from source files');
-            
-            const aggregateStats = {
-                row_count: sourceFiles.reduce((sum, file) => sum + file.row_count, 0),
-                size_bytes: sourceFiles.reduce((sum, file) => sum + file.size_bytes, 0),
-                min_time: Math.min(...sourceFiles.map(file => file.min_time)),
-                max_time: Math.max(...sourceFiles.map(file => file.max_time))
-            };
-            
-            this.log('[DRY-RUN] Aggregate stats:', aggregateStats);
-            return aggregateStats;
-        }
-
-        const result = await this.connection.run(`
-            SELECT 
-                COUNT(*) as row_count,
-                MIN(min_time) as min_time,
-                MAX(max_time) as max_time
-            FROM read_parquet('${filePath}')
-        `);
-        
-        const chunks = await result.fetchAllChunks();
-        const stats = chunks[0].toArray()[0];
-        stats.size_bytes = Bun.file(filePath).size;
-        
-        this.log('Got stats for compacted file:', stats);
-        return stats;
-        
-        this.log('Got stats for compacted file:', stats);
-        return stats;
+        const mergeQuery = `COPY (SELECT * FROM read_parquet_mergetree([${fileListQuery}], 'time')) TO '${outputPath}' (FORMAT 'parquet');`;
+        await this.connection.run(mergeQuery);
     }
 
     async processTableGroup(host, tableId, files) {
@@ -248,30 +207,25 @@ class ParquetCompactor {
 
             const firstFile = groupFiles[0];
             const firstFilePath = firstFile.path;
-            
             const pathParts = firstFilePath.split('/');
-            const timeSlot = pathParts[5];
             
             const compactedFileName = `c_${firstFile.id}_g${groupIndex}.parquet`;
             const outputPathParts = [...pathParts.slice(0, -1), compactedFileName];
             const relativePath = outputPathParts.join('/');
             
             this.verifyPathCoherence(firstFilePath, relativePath, host);
-            
             const outputPath = join(this.dataDir, relativePath);
             
             if (this.dryRun) {
                 this.log(`[DRY-RUN] Would create directory: ${dirname(outputPath)}`);
-                this.log(`[DRY-RUN] Would compact files:`, groupFiles.map(f => basename(f.path)));
-                this.log(`[DRY-RUN] Source path pattern: ${firstFilePath}`);
+                this.log(`[DRY-RUN] Would merge files:`, groupFiles.map(f => basename(f.path)));
                 this.log(`[DRY-RUN] Output path: ${relativePath}`);
             } else {
                 await mkdir(dirname(outputPath), { recursive: true });
+                await this.mergeParquetFiles(host, groupFiles, outputPath);
             }
 
-            await this.compactParquetFiles(host, groupFiles, outputPath);
-            const stats = await this.getParquetStats(outputPath, groupFiles);
-
+            const stats = this.getAggregateStats(groupFiles);
             results.push({
                 id: firstFile.id,
                 path: relativePath,
@@ -287,7 +241,7 @@ class ParquetCompactor {
     }
 
     async readSnapshotMetadata(host, filename) {
-        const content = await readFile(join(this.getSnapshotsDir(host), filename), 'utf-8');
+        const content = await readFile(join(this.dataDir, host, 'snapshots', filename), 'utf-8');
         return JSON.parse(content);
     }
 
@@ -295,6 +249,7 @@ class ParquetCompactor {
         this.log('\nUpdating metadata for table:', tableId);
         this.log('Compacted files info:', JSON.stringify(compactedFiles, null, 2));
 
+        // Find and update the specific table's files in the metadata
         for (const [dbId, dbInfo] of metadata.databases) {
             for (const [tId, files] of dbInfo.tables) {
                 if (tId === tableId) {
@@ -304,16 +259,16 @@ class ParquetCompactor {
                     if (this.dryRun) {
                         this.log('[DRY-RUN] Would replace files with:', JSON.stringify(compactedFiles, null, 2));
                     } else {
-                        dbInfo.tables.set(tId, compactedFiles);
+                        // Replace the array of files directly
+                        for (let i = 0; i < dbInfo.tables.length; i++) {
+                            if (dbInfo.tables[i][0] === tId) {
+                                dbInfo.tables[i][1] = compactedFiles;
+                                break;
+                            }
+                        }
                     }
 
-                    const aggregateStats = {
-                        size_bytes: compactedFiles.reduce((sum, f) => sum + f.size_bytes, 0),
-                        row_count: compactedFiles.reduce((sum, f) => sum + f.row_count, 0),
-                        min_time: Math.min(...compactedFiles.map(f => f.min_time)),
-                        max_time: Math.max(...compactedFiles.map(f => f.max_time))
-                    };
-
+                    const aggregateStats = this.getAggregateStats(compactedFiles);
                     if (this.dryRun) {
                         this.log('[DRY-RUN] Would update metadata statistics to:', aggregateStats);
                     } else {
@@ -336,7 +291,7 @@ class ParquetCompactor {
             
             for (const host of this.hosts) {
                 this.log(`\nProcessing host: ${host}`);
-                const snapshotFiles = await readdir(this.getSnapshotsDir(host));
+                const snapshotFiles = await readdir(join(this.dataDir, host, 'snapshots'));
                 const jsonFiles = snapshotFiles.filter(file => file.endsWith('.info.json'));
 
                 for (const snapshotFile of jsonFiles) {
@@ -351,7 +306,7 @@ class ParquetCompactor {
                         }
                     }
 
-                    const outputMetadataPath = join(this.getSnapshotsDir(host), snapshotFile);
+                    const outputMetadataPath = join(this.dataDir, host, 'snapshots', snapshotFile);
                     if (!this.dryRun) {
                         await writeFile(
                             outputMetadataPath,
@@ -405,7 +360,6 @@ if (hostsIndex === -1 || !args[hostsIndex + 1]) {
 const hosts = args[hostsIndex + 1].split(',');
 const dryRun = args.includes('--dry-run');
 const verbose = args.includes('--verbose');
-
 const windowIndex = args.indexOf('--window');
 const timeWindowHours = windowIndex !== -1 ? parseInt(args[windowIndex + 1]) : 24;
 
