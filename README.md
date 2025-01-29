@@ -9,16 +9,16 @@ Kompactor is a DuckDB powered Parquet + Metadata data compactor for InfluxDB3 Co
 
 ## Overview
 
-Kompactor extends InfluxDB3 Core by compacting stored parquet files with associated metadata.
-- Reading snapshot metadata from JSON files
-- Compacting multiple parquet files into single files sorted by timestamp
+Kompactor extends the lifetime and performance of InfluxDB3 Core by
+- Reading InfluxDB 3 snapshot metadata from JSON files
+- Compacting and time sorting multiple parquet files daily/hourly
 - Updating metadata to reflect the new compacted file structure
-- Maintaining correct min/max time ranges and statistics
-
+- Maintaining correct min/max time ranges and statistics for readers
+- 
 
 ## Prerequisites
 
-- InfluxDB 3 Core
+- InfluxDB 3 Core w/ File storage
 - [Bun](https://bun.sh/) runtime environment
 - DuckDB node API package
 
