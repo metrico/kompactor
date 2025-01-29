@@ -1,14 +1,15 @@
 # ![image-removebg-preview (14)](https://github.com/user-attachments/assets/fd2af745-0ab4-4960-b7df-589189ef8ca1)
 
-DuckDB powered Parquet + Metadata Compactor for InfluxDB3 Core
+Kompactor is a DuckDB powered Parquet + Metadata data compactor for InfluxDB3 Core or _"FDAP"_ stack
 
-## Status
+<img src="https://github.com/user-attachments/assets/1945e6ec-11f3-48ce-b92e-e06481eb4421" width=500 />
 
+> [!WARNING]
 > ⚠️ Experimental, Untested & Unstable - keep backups!
 
 ## Overview
 
-Kompactor is designed to efficiently compact InfluxDB3 parquet files with associated metadata.
+Kompactor extends InfluxDB3 Core by compacting stored parquet files with associated metadata.
 - Reading snapshot metadata from JSON files
 - Compacting multiple parquet files into single files sorted by timestamp
 - Updating metadata to reflect the new compacted file structure
@@ -17,8 +18,10 @@ Kompactor is designed to efficiently compact InfluxDB3 parquet files with associ
 
 ## Prerequisites
 
+- InfluxDB 3 Core
 - [Bun](https://bun.sh/) runtime environment
 - DuckDB node API package
+
 
 ## Usage
 
