@@ -14,7 +14,7 @@ Kompactor extends the lifetime and performance of InfluxDB3 Core by
 - Compacting and time sorting multiple parquet files daily/hourly
 - Updating metadata to reflect the new compacted file structure
 - Maintaining correct min/max time ranges and statistics for readers
-- 
+  
 
 ## Prerequisites
 
