@@ -1,4 +1,5 @@
-# ![image-removebg-preview (14)](https://github.com/user-attachments/assets/fd2af745-0ab4-4960-b7df-589189ef8ca1)
+<!-- # ![image-removebg-preview (14)](https://github.com/user-attachments/assets/fd2af745-0ab4-4960-b7df-589189ef8ca1) -->
+# <img src="https://github.com/user-attachments/assets/14cf638a-c5e6-468f-bce7-871d1488d355" width=500 />
 
 Kompactor is a DuckDB powered Parquet + Metadata data compactor for InfluxDB3 Core or _"FDAP"_ stack
 
