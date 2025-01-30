@@ -187,7 +187,11 @@ class ParquetCompactor {
 
         const fileListQuery = filePaths.map(path => `'${path}'`).join(', ');
         // const mergeQuery = `COPY (SELECT * FROM read_parquet_mergetree([${fileListQuery}], 'time')) TO '${outputPath}' (FORMAT 'parquet');`;
-        const mergeQuery = `COPY (SELECT * FROM read_parquet([${fileListQuery}]) ORDER BY time) TO '${outputPath}';`;
+        const mergeQuery = `COPY (SELECT * FROM read_parquet([${fileListQuery}]) ORDER BY time) TO '${outputPath}' (
+            FORMAT 'parquet',
+            COMPRESSION 'SNAPPY',
+            ROW_GROUP_SIZE 100000
+        );`;
 
         await this.connection.run(mergeQuery);
     }
@@ -220,11 +224,17 @@ class ParquetCompactor {
             
             if (this.dryRun) {
                 this.log(`[DRY-RUN] Would create directory: ${dirname(outputPath)}`);
-                this.log(`[DRY-RUN] Would merge files:`, groupFiles.map(f => basename(f.path)));
+                this.log(`[DRY-RUN] Would merge and delete files:`, groupFiles.map(f => basename(f.path)));
                 this.log(`[DRY-RUN] Output path: ${relativePath}`);
             } else {
                 await mkdir(dirname(outputPath), { recursive: true });
                 await this.mergeParquetFiles(host, groupFiles, outputPath);
+                // Delete old files after merging
+                for (const file of groupFiles) {
+                    const filePath = join(this.dataDir, file.path);
+                    this.log(`Deleting old file: ${filePath}`);
+                    await unlink(filePath);
+                }
             }
 
             const stats = this.getAggregateStats(groupFiles);
