@@ -111,9 +111,5 @@ The project is written in TypeScript and uses:
 - DuckDB for parquet file operations
 - Node.js fs/promises API for file system operations
 
-## Disclaimer
-
-Motivation and background information from this [blog post](https://www.influxdata.com/blog/influxdb3-open-source-public-alpha-jan-27/?utm_source=linkedin&utm_medium=social&utm_campaign=2025-01-13-InfluxDB-3-Launch)
-
-
-> Bun™, DuckDB™, InfluxDB™ and any other trademarks, service marks, trade names, and product names referenced in this documentation are the property of their respective owners. The use of any trademark, trade name, or product name is for descriptive purposes only and does not imply any affiliation with or endorsement by the trademark owner. All product names, logos, brands, trademarks, and registered trademarks mentioned herein are the property of their respective owners. They are used in this documentation for identification purposes only. Use of these names, logos, trademarks, and brands does not imply endorsement, sponsorship, or affiliation. This project is independent and not affiliated with, endorsed by, or sponsored by any of the companies whose products or technologies are mentioned in this documentation.
+[^1]: Motivation and background information from this [blog post](https://www.influxdata.com/blog/influxdb3-open-source-public-alpha-jan-27/?utm_source=linkedin&utm_medium=social&utm_campaign=2025-01-13-InfluxDB-3-Launch) [^1]
+[^2]:  Bun™, DuckDB™, InfluxDB™ and any other trademarks, service marks, trade names, and product names referenced in this documentation are the property of their respective owners. The use of any trademark, trade name, or product name is for descriptive purposes only and does not imply any affiliation with or endorsement by the trademark owner. All product names, logos, brands, trademarks, and registered trademarks mentioned herein are the property of their respective owners. They are used in this documentation for identification purposes only. Use of these names, logos, trademarks, and brands does not imply endorsement, sponsorship, or affiliation. This project is independent and not affiliated with, endorsed by, or sponsored by any of the companies whose products or technologies are mentioned in this documentation. [^2]
