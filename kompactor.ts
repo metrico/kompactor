@@ -1,4 +1,4 @@
-import { readdir, mkdir, readFile, writeFile, access } from 'node:fs/promises';
+import { readdir, mkdir, readFile, writeFile, access, unlink } from 'node:fs/promises';
 import { join, dirname, resolve, sep, basename } from 'node:path';
 import duckdb, { DuckDBInstance } from '@duckdb/node-api';
 
@@ -108,7 +108,7 @@ class ParquetCompactor {
         return groups;
     }
 
-    async validateDirectories() {
+    validateDirectories = async () => {
         try {
             await access(this.dataDir);
         } catch {
@@ -137,7 +137,7 @@ class ParquetCompactor {
         }
     }
 
-    async initializeDuckDB() {
+    initializeDuckDB = async () => {
         this.log('Initializing DuckDB instance...');
         this.log('DuckDB version:', duckdb.version());
 
@@ -172,7 +172,19 @@ class ParquetCompactor {
         };
     }
 
-    async mergeParquetFiles(host, tableFiles, outputPath) {
+    cleanupSourceFiles = async (host, groupFiles) => {
+        for (const file of groupFiles) {
+            const filePath = join(this.dataDir, file.path);
+            this.log(`Removing source file: ${filePath}`);
+            try {
+                await unlink(filePath);
+            } catch (error) {
+                this.log(`Warning: Failed to remove source file ${filePath}: ${error.message}`);
+            }
+        }
+    }
+
+    mergeParquetFiles = async (host, tableFiles, outputPath) => {
         if (!this.connection) throw new Error('DuckDB connection not initialized');
         
         const filePaths = tableFiles.map(f => join(this.dataDir, f.path));
@@ -185,14 +197,20 @@ class ParquetCompactor {
             return;
         }
 
-        const fileListQuery = filePaths.map(path => `'${path}'`).join(', ');
-        // const mergeQuery = `COPY (SELECT * FROM read_parquet_mergetree([${fileListQuery}], 'time')) TO '${outputPath}' (FORMAT 'parquet');`;
-        const mergeQuery = `COPY (SELECT * FROM read_parquet([${fileListQuery}]) ORDER BY time) TO '${outputPath}';`;
+        try {
+            // Merge files with proper parquet options
+            const fileListQuery = filePaths.map(path => `'${path}'`).join(', ');
+            const mergeQuery = `COPY (SELECT * FROM read_parquet([${fileListQuery}]) ORDER BY time) TO '${outputPath}';`;
+            await this.connection.run(mergeQuery);
 
-        await this.connection.run(mergeQuery);
+        } catch (error) {
+            this.log(`Error during merge: ${error.message}`);
+            throw error;
+        }
     }
+    
 
-    async processTableGroup(host, tableId, files) {
+    processTableGroup = async (host, tableId, files) => {
         this.log(`\nProcessing table group ${tableId} with ${files.length} files`);
         this.log('Files to process:', JSON.stringify(files, null, 2));
 
@@ -242,12 +260,12 @@ class ParquetCompactor {
         return results;
     }
 
-    async readSnapshotMetadata(host, filename) {
+    readSnapshotMetadata = async (host, filename) => {
         const content = await readFile(join(this.dataDir, host, 'snapshots', filename), 'utf-8');
         return JSON.parse(content);
     }
 
-    async updateMetadata(metadata, tableId, compactedFiles) {
+    updateMetadata = async (metadata, tableId, compactedFiles) => {
         this.log('\nUpdating metadata for table:', tableId);
         this.log('Compacted files info:', JSON.stringify(compactedFiles, null, 2));
 
@@ -286,7 +304,7 @@ class ParquetCompactor {
         return metadata;
     }
 
-    async compact() {
+    compact = async () => {
         try {
             await this.validateDirectories();
             await this.initializeDuckDB();
@@ -323,7 +341,7 @@ class ParquetCompactor {
             this.connection = null;
             this.instance = null;
         }
-    }
+   }
 }
 
 const usage = `
