@@ -5,7 +5,7 @@ Kompactor is a DuckDB powered Parquet + Metadata data compactor for InfluxDB3 Co
 <img src="https://github.com/user-attachments/assets/1945e6ec-11f3-48ce-b92e-e06481eb4421" width=500 />
 
 > [!WARNING]
-> ⚠️ Experimental, Untested & Unstable - keep backups!
+> ⚠️ _Experimental, Untested & Unstable - keep backups!_
 
 ## Overview
 
