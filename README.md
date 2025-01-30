@@ -3,7 +3,9 @@
 
 Kompactor is a DuckDB powered Parquet + Metadata data compactor for InfluxDB3 Core or _"FDAP"_ stack
 
-<img src="https://github.com/user-attachments/assets/1945e6ec-11f3-48ce-b92e-e06481eb4421" width=500 />
+<img src="https://github.com/user-attachments/assets/1945e6ec-11f3-48ce-b92e-e06481eb4421" width=430 />
+
+<br>
 
 > [!WARNING]
 > ⚠️ _Experimental, Untested & Unstable - keep backups!_
