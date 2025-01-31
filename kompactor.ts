@@ -76,19 +76,19 @@ class ParquetCompactor {
         const groups = [];
         let currentGroup = [];
         let currentMinTime = null;
-
+    
         for (const file of sortedFiles) {
             if (this.isCompactedFile(file.path)) {
                 this.log(`Skipping already compacted file: ${file.path}`);
                 continue;
             }
-
+    
             if (!currentGroup.length) {
                 currentGroup.push(file);
                 currentMinTime = BigInt(file.min_time);
                 continue;
             }
-
+    
             const fileMaxTime = BigInt(file.max_time);
             if (fileMaxTime - currentMinTime <= this.timeWindowNanos) {
                 currentGroup.push(file);
@@ -100,11 +100,11 @@ class ParquetCompactor {
                 currentMinTime = BigInt(file.min_time);
             }
         }
-
+    
         if (currentGroup.length > 0) {
             groups.push(currentGroup);
         }
-
+    
         return groups;
     }
 
@@ -170,6 +170,37 @@ class ParquetCompactor {
             min_time: Math.min(...groupFiles.map(file => file.min_time)),
             max_time: Math.max(...groupFiles.map(file => file.max_time))
         };
+    }
+
+    computeSplitTime(chunkTimes, minTime, maxTime, totalSize, maxDesiredFileSize) {
+        if (totalSize <= maxDesiredFileSize) {
+            return [maxTime];
+        }
+    
+        if (minTime === maxTime) {
+            return [maxTime];
+        }
+    
+        const splitTimes = [];
+        const percentage = maxDesiredFileSize / totalSize;
+        const interval = Math.ceil((maxTime - minTime) * percentage);
+    
+        let min = minTime;
+        while (true) {
+            const splitTime = min + interval;
+            if (splitTime >= maxTime) {
+                break;
+            } else if (this.timeRangePresent(chunkTimes, min, splitTime)) {
+                splitTimes.push(splitTime);
+            }
+            min = splitTime;
+        }
+    
+        return splitTimes;
+    }
+    
+    timeRangePresent(chunkTimes, minTime, maxTime) {
+        return chunkTimes.some(chunk => chunk.max >= minTime && chunk.min <= maxTime);
     }
 
     async mergeParquetFiles(host, tableFiles, outputPath) {
@@ -258,43 +289,37 @@ class ParquetCompactor {
     }
 
     async updateMetadata(metadata, tableId, compactedFiles) {
-        this.log('\nUpdating metadata for table:', tableId);
-        this.log('Compacted files info:', JSON.stringify(compactedFiles, null, 2));
+    this.log('\nUpdating metadata for table:', tableId);
+    this.log('Compacted files info:', JSON.stringify(compactedFiles, null, 2));
 
-        // Find and update the specific table's files in the metadata
-        for (const [dbId, dbInfo] of metadata.databases) {
-            for (const [tId, files] of dbInfo.tables) {
-                if (tId === tableId) {
-                    this.log(`Found matching table ${tId} in database ${dbId}`);
-                    this.log('Original files:', JSON.stringify(files, null, 2));
-                    
-                    if (this.dryRun) {
-                        this.log('[DRY-RUN] Would replace files with:', JSON.stringify(compactedFiles, null, 2));
-                    } else {
-                        // Replace the array of files directly
-                        for (let i = 0; i < dbInfo.tables.length; i++) {
-                            if (dbInfo.tables[i][0] === tId) {
-                                dbInfo.tables[i][1] = compactedFiles;
-                                break;
-                            }
-                        }
-                    }
+    for (const [dbId, dbInfo] of metadata.databases) {
+        for (const [tId, files] of dbInfo.tables) {
+            if (tId === tableId) {
+                this.log(`Found matching table ${tId} in database ${dbId}`);
+                this.log('Original files:', JSON.stringify(files, null, 2));
+                
+                if (this.dryRun) {
+                    this.log('[DRY-RUN] Would replace files with:', JSON.stringify(compactedFiles, null, 2));
+                } else {
+                    const index = dbInfo.tables.findIndex(([id]) => id === tId);
+                    dbInfo.tables[index][1] = compactedFiles;
+                }
 
-                    const aggregateStats = this.getAggregateStats(compactedFiles);
-                    if (this.dryRun) {
-                        this.log('[DRY-RUN] Would update metadata statistics to:', aggregateStats);
-                    } else {
-                        metadata.parquet_size_bytes = aggregateStats.size_bytes;
-                        metadata.row_count = aggregateStats.row_count;
-                        metadata.min_time = aggregateStats.min_time;
-                        metadata.max_time = aggregateStats.max_time;
-                    }
+                const aggregateStats = this.getAggregateStats(compactedFiles);
+                if (this.dryRun) {
+                    this.log('[DRY-RUN] Would update metadata statistics to:', aggregateStats);
+                } else {
+                    metadata.parquet_size_bytes = aggregateStats.size_bytes;
+                    metadata.row_count = aggregateStats.row_count;
+                    metadata.min_time = aggregateStats.min_time;
+                    metadata.max_time = aggregateStats.max_time;
                 }
             }
         }
-
-        return metadata;
     }
+
+    return metadata;
+}
 
     async compact() {
         try {
