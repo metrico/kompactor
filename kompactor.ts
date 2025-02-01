@@ -188,7 +188,7 @@ class ParquetCompactor {
         const fileListQuery = filePaths.map(path => `'${path}'`).join(', ');
         const mergeQuery = `COPY (SELECT * FROM read_parquet([${fileListQuery}]) ORDER BY time) TO '${outputPath}' (
             FORMAT 'parquet',
-            COMPRESSION 'SNAPPY',
+            COMPRESSION 'ZSTD',
             ROW_GROUP_SIZE 100000
         );`;
 
