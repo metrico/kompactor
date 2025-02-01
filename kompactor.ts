@@ -224,17 +224,17 @@ class ParquetCompactor {
             
             if (this.dryRun) {
                 this.log(`[DRY-RUN] Would create directory: ${dirname(outputPath)}`);
-                this.log(`[DRY-RUN] Would merge files:`, groupFiles.map(f => basename(f.path)));
+                this.log(`[DRY-RUN] Would merge and delete files:`, groupFiles.map(f => basename(f.path)));
                 this.log(`[DRY-RUN] Output path: ${relativePath}`);
             } else {
                 await mkdir(dirname(outputPath), { recursive: true });
-                await this.mergeParquetFiles(host, groupFiles, outputPath);
-                
+                await this.mergeParquetFiles(host, groupFiles, outputPath);                
                 // Delete original files only after successful merge
                 for (const file of groupFiles) {
                     const filePath = join(this.dataDir, file.path);
                     this.log(`Deleting original file: ${filePath}`);
                     await Bun.file(filePath).delete();
+
                 }
             }
 
