@@ -335,7 +335,7 @@ class ParquetCompactor {
                 });
 
                 // Create compacted file path
-                const basePath = sortedFiles[0].path.split('/').slice(0, -2).join('/');
+                const basePath = sortedFiles[0].path.split('/').slice(0, -3).join('/'); // Changed from -2 to -3
                 const firstWalSeq = this.extractWalSequence(sortedFiles[0].path);
                 const lastWalSeq = this.extractWalSequence(sortedFiles[sortedFiles.length - 1].path);
                 const outputDir = `${basePath}/${date}/${hour}-00`;
