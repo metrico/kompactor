@@ -58,14 +58,47 @@ class ParquetCompactor {
     }
 
     extractWalSequence(path) {
-        const match = path.match(/(\d{10})\.parquet$/);
-        if (!match) {
-            throw new Error(`Could not extract WAL sequence number from path: ${path}`);
-        }
-        return match[1];
+        // Try original format first
+        let match = path.match(/(\d{10})\.parquet$/);
+        if (match) return match[1];
+        
+        // Try compacted format
+        match = path.match(/c_(\d{10})_\d+_g\d+\.parquet$/);
+        if (match) return match[1];
+        
+        throw new Error(`Could not extract WAL sequence number from path: ${path}`);
     }
 
     getTimeBasedGroups(files) {
+        // Group files by hour using their chunk_time
+        const hourlyGroups = new Map();
+        
+        for (const file of files) {
+            const hour = Math.floor(Number(file.chunk_time) / (3600 * 1000000000));
+            if (!hourlyGroups.has(hour)) {
+                hourlyGroups.set(hour, []);
+            }
+            hourlyGroups.get(hour).push(file);
+        }
+
+        // For each hour, if there's more than one file, they need compaction
+        const result = [];
+        for (const [hour, hourFiles] of hourlyGroups) {
+            if (hourFiles.length > 1) {
+                result.push(hourFiles);
+            } else {
+                // Single file for the hour - if it's not compacted, add it for processing
+                const file = hourFiles[0];
+                if (!this.isCompactedFile(file.path)) {
+                    result.push(hourFiles);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    getTimeBasedGroupsOld(files) {
         // Don't split if total size is small enough
         const totalSize = files.reduce((sum, f) => sum + f.size_bytes, 0);
         const [smallCutoff, largeCutoff] = this.computeCutoffBytes();
@@ -224,17 +257,17 @@ class ParquetCompactor {
             
             if (this.dryRun) {
                 this.log(`[DRY-RUN] Would create directory: ${dirname(outputPath)}`);
-                this.log(`[DRY-RUN] Would merge and delete files:`, groupFiles.map(f => basename(f.path)));
+                this.log(`[DRY-RUN] Would merge files:`, groupFiles.map(f => basename(f.path)));
                 this.log(`[DRY-RUN] Output path: ${relativePath}`);
             } else {
                 await mkdir(dirname(outputPath), { recursive: true });
-                await this.mergeParquetFiles(host, groupFiles, outputPath);                
+                await this.mergeParquetFiles(host, groupFiles, outputPath);
+                
                 // Delete original files only after successful merge
                 for (const file of groupFiles) {
                     const filePath = join(this.dataDir, file.path);
                     this.log(`Deleting original file: ${filePath}`);
                     await Bun.file(filePath).delete();
-
                 }
             }
 
