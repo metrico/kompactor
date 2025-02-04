@@ -40,14 +40,13 @@ Arguments:
 
 Options:
     --hosts      Comma-separated list of host folders to process (e.g., my_host,other_host)
-    --window     Time window in hours for splitting files (default: 24)
     --dry-run    Run without making any changes
     --verbose    Enable detailed logging
     --help       Show this help message
 
 Example:
     bun run kompactor.ts /data --hosts my_host --dry-run --verbose
-    bun run kompactor.ts /data --hosts my_host,other_host --window 12
+    bun run kompactor.ts /data --hosts my_host,other_host --verbose
 
 ```
 
